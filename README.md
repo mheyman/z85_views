@@ -35,6 +35,7 @@ The elements of the input stream can be odd sizes as long as the total bytes is 
     std::array< std::array<char, 5>, 4> constexpr a{{ h, w, h, w}};
     // encode range of 4 5-byte elements
     auto const encoded{ a | sph::ranges::views::z85_encode | std::ranges::to<std::vector>()};
+    // --> "xK#0@z*cbuy?di<y&13lz/PV8"
 ```
 
 # Building
