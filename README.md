@@ -18,7 +18,7 @@ int main()
     std::array<unsigned char, 8> hello_data{ {0x86, 0x4F, 0xD2, 0x6F, 0xB5, 0x59, 0xF7, 0x5B} };
     std::string encoded_str;
     std::ranges::copy(hello_data | sph::ranges::views::z85_encode, std::back_inserter(encoded_str));
-    std::cout << encoded_str << '\n'; // "HelloWorld"_
+    std::cout << encoded_str << '\n'; // "HelloWorld"
     
     # example that skips invalid characters during decode
     auto decoded{ std::string{"Hello World\n" | sph::ranges::views::z85_decode | std::ranges::to<std::vector>() };
@@ -31,7 +31,7 @@ The elements of the input stream can be odd sizes as long as the total bytes is 
 
 ```cpp
     std::array<char, 5> constexpr h{ {'h', 'e', 'l', 'l', 'o'} };
-    std::array<char, 5> constexpr w{{'w', 'o', 'r', 'l', 'd'}};
+    std::array<char, 5> constexpr w{ {'w', 'o', 'r', 'l', 'd'} };
     std::array< std::array<char, 5>, 4> constexpr a{{ h, w, h, w}};
     // encode range of 4 5-byte elements
     auto const encoded{ a | sph::ranges::views::z85_encode | std::ranges::to<std::vector>()};
