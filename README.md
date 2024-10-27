@@ -40,6 +40,14 @@ The elements of the input stream can be odd sizes as long as the total bytes is 
 
 # Building
 
+While the z85 library has no dependencies other than C++23, the unit tests 
+require doctest and fmt. These get pulled in using [vcpkg](https://vcpkg.io/en/)
+which means to build, you need a vcpkg environment setup, unfortunately even if 
+you are not building the tests. This build assumes you have done something like 
+`git clone https://github.com/microsoft/vcpkg.git .vcpkg` in your home directory.
+Then you run the `bootstrap-vcpkg.{bat,sh}` program in that directory to make
+vcpkg operational.
+
 ```sh
 cmake -B build --preset={preset}
 cmake --install build 
