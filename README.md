@@ -27,6 +27,16 @@ int main()
 
 ```
 
+The elements of the input stream can be odd sizes as long as the total bytes is a multiple of 4.
+
+```cpp
+    std::array<char, 5> constexpr h{ {'h', 'e', 'l', 'l', 'o'} };
+    std::array<char, 5> constexpr w{{'w', 'o', 'r', 'l', 'd'}};
+    std::array< std::array<char, 5>, 4> constexpr a{{ h, w, h, w}};
+    // encode range of 4 5-byte elements
+    auto const encoded{ a | sph::ranges::views::z85_encode | std::ranges::to<std::vector>()};
+```
+
 # Building
 
 ```sh
