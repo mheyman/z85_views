@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <format>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
@@ -9,9 +10,9 @@ namespace sph::ranges::views
     namespace detail
     {
         // Custom transform view that filters bytes and then converts every 4 bytes into 5 bytes.
-        template<std::ranges::viewable_range R>
-            requires std::ranges::input_range<R>
-        class z85_decode_view : public std::ranges::view_interface<z85_decode_view<R>> {
+        template<std::ranges::viewable_range R, typename T>
+            requires std::ranges::input_range<R> && std::is_standard_layout_v<T>
+        class z85_decode_view : public std::ranges::view_interface<z85_decode_view<R, T>> {
             R input_;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
         public:
             explicit z85_decode_view(R&& input)  // NOLINT(cppcoreguidelines-rvalue-reference-param-not-moved)
@@ -31,43 +32,37 @@ namespace sph::ranges::views
             struct sentinel;
             class iterator
             {
+            public:
+                using iterator_category = std::input_iterator_tag;
+                using value_type = T;
+                using difference_type = std::ptrdiff_t;
+                using input_type = std::remove_cvref_t<std::ranges::range_value_t<R>>;
+            private:
                 std::ranges::iterator_t<R> current_;
                 std::ranges::iterator_t<R> end_;
                 size_t current_pos_{ 0 };
-                size_t buffer_pos_;
                 std::array<uint8_t, 4> buffer_ = {};
+                size_t buffer_pos_{ buffer_.size() };
+                value_type value_;
+                bool at_end_{ false };
             public:
-                using iterator_category = std::input_iterator_tag;
-                using value_type = uint8_t;
-                using difference_type = std::ptrdiff_t;
-                using input_type = std::remove_cvref_t<std::ranges::range_value_t<R>>;
 
                 iterator(std::ranges::iterator_t<R> begin, std::ranges::iterator_t<R> end)
-                    : current_(begin), end_(end), buffer_pos_(0)
+                    : current_(begin), end_(end)
                 {
-                    load_next_chunk();
+                    load_next_value();
                 }
 
                 auto operator++(int) -> iterator&
                 {
                     auto ret{ *this };
-                    ++buffer_pos_;
-                    if (buffer_pos_ >= buffer_.size())
-                    {
-                        load_next_chunk();
-                    }
-                
+                    load_next_value();
                     return ret;
                 }
 
                 auto operator++() -> iterator&
                 {
-                    ++buffer_pos_;
-                    if (buffer_pos_ >= buffer_.size())
-                    {
-                        load_next_chunk();
-                    }
-
+                    load_next_value();
                     return *this;
                 }
 
@@ -78,12 +73,12 @@ namespace sph::ranges::views
 
             	auto equals(const sentinel&) const -> bool
                 {
-                    return current_ == end_ && buffer_pos_ == buffer_.size();
+                    return at_end_;
                 }
 
                 auto operator*() const -> value_type
                 {
-	                return buffer_[buffer_pos_];
+	                return value_;
                 }
 
                 auto operator==(const iterator& other) const -> bool { return equals(other); }
@@ -92,6 +87,31 @@ namespace sph::ranges::views
                 auto operator!=(const sentinel&s) const -> bool { return !equals(s); }
 
             private:
+                void load_next_value()
+                {
+                    std::span<uint8_t> vs{ reinterpret_cast<uint8_t*>(&value_), sizeof(value_type) };
+                    for (auto t : std::views::enumerate(vs))
+                    {
+                        auto [v_count, v] {t};
+                        if (buffer_pos_ >= buffer_.size())
+                        {
+                            load_next_chunk();
+                            if (buffer_pos_ != 0)
+                            {
+                                if (v_count > 0)
+                                {
+                                    throw std::runtime_error(std::format("Partial type at end of data. Required {} bytes, received {}.", sizeof(value_type), v_count));
+                                }
+
+                                at_end_ = true;
+                                return;
+                            }
+                        }
+
+                        v = buffer_[buffer_pos_];
+                        ++buffer_pos_;
+                    }
+                }
                 void load_next_chunk()
                 {
 	                if (std::optional<std::array<char, 5>> const chunk{ next_value() })
@@ -209,18 +229,28 @@ namespace sph::ranges::views
             sentinel end() { return sentinel{}; }
         };
 
-        template<std::ranges::viewable_range R>
-        z85_decode_view(R&&) -> z85_decode_view<R>;
+        struct z85_decode_tag
+        {
+	        
+        };
 
-        struct z85_decode_fn : std::ranges::range_adaptor_closure<z85_decode_fn>
+        template<std::ranges::viewable_range R, typename T = uint8_t>
+        z85_decode_view(R&&) -> z85_decode_view<R, T>;
+
+        template <typename T>
+        struct z85_decode_fn : std::ranges::range_adaptor_closure<z85_decode_fn<T>>
         {
             template <std::ranges::viewable_range R>
-            [[nodiscard]] constexpr auto operator()(R&& range) const -> z85_decode_view<R>
+            [[nodiscard]] constexpr auto operator()(R&& range) const -> z85_decode_view<R, T>
             {
-                return z85_decode_view(std::forward<R>(range));
+                return z85_decode_view<R, T>(std::forward<R>(range));
             }
         };
     }
 
-    inline constexpr detail::z85_decode_fn z85_decode;
+    template<typename T = uint8_t>
+    auto z85_decode(detail::z85_decode_tag = {}) -> detail::z85_decode_fn<T>
+    {
+        return {};
+    }
 }

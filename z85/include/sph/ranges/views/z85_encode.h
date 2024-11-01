@@ -10,7 +10,7 @@ namespace sph::ranges::views
     {
         // Custom transform view that filters bytes and then converts every 4 bytes into 5 bytes.
         template<std::ranges::viewable_range R>
-            requires std::ranges::input_range<R>
+            requires std::ranges::input_range<R> && std::is_standard_layout_v<std::ranges::range_value_t<R>>
         class z85_encode_view : public std::ranges::view_interface<z85_encode_view<R>> {
             R input_;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
         public:
@@ -199,5 +199,9 @@ namespace sph::ranges::views
         };
     }
 
-    inline constexpr detail::z85_encode_fn z85_encode;
+    inline auto z85_encode() -> detail::z85_encode_fn
+    {
+        return {};
+    }
+
 }
