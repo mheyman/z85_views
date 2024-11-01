@@ -199,9 +199,13 @@ namespace sph::ranges::views
         };
     }
 
-    inline auto z85_encode() -> detail::z85_encode_fn
+
+}
+
+namespace sph::views
+{
+    inline auto z85_encode() -> sph::ranges::views::detail::z85_encode_fn
     {
         return {};
     }
-
 }

@@ -20,14 +20,14 @@ int main()
     };
     std::string encoded_str;
     std::ranges::copy(
-        hello_data | sph::ranges::views::z85_encode(),
+        hello_data | sph::views::z85_encode(),
         std::back_inserter(encoded_str));
     std::cout << encoded_str << '\n'; // "HelloWorld"
     
     # example that skips invalid characters during decode
     auto decoded{ 
         std::string{"Hello World\n"
-        | sph::ranges::views::z85_decode() 
+        | sph::views::z85_decode() 
         | std::ranges::to<std::vector>() };
     // decoded = {0x86, 0x4F, 0xD2, 0x6F, 0xB5, 0x59, 0xF7, 0x5B}
 }
@@ -47,14 +47,14 @@ Decoding can be into a view of any standard layout type.
     // encode range of 4 5-byte elements
     auto const encoded{ 
         a 
-        | sph::ranges::views::z85_encode() 
+        | sph::views::z85_encode() 
         | std::ranges::to<std::vector>()};
     // --> "xK#0@z*cbuy?di<y&13lz/PV8"
 
     // get back a copy of the originally encoded array
     auto decoded{ 
         encoded 
-        | sph::ranges::views::z85_decode<std::array<char, 5>>() 
+        | sph::views::z85_decode<std::array<char, 5>>() 
         | std::ranges::to<std::vector>() };
 ```
 

@@ -248,8 +248,12 @@ namespace sph::ranges::views
         };
     }
 
+}
+
+namespace sph::views
+{
     template<typename T = uint8_t>
-    auto z85_decode(detail::z85_decode_tag = {}) -> detail::z85_decode_fn<T>
+    auto z85_decode(detail::z85_decode_tag = {}) -> sph::ranges::views::detail::z85_decode_fn<T>
     {
         return {};
     }
