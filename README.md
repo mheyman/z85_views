@@ -1,4 +1,4 @@
-# z85_stream
+# z85_views
 z85 encoding via a range adapter.
 
 Peforms encoding according to https://rfc.zeromq.org/spec/32/
@@ -60,7 +60,7 @@ Decoding can be into a view of any standard layout type.
 
 # Building
 
-While the z85 library has no dependencies other than C++23, the unit tests 
+While the z85_views library has no dependencies other than C++23, the unit tests 
 require doctest and fmt. These get pulled in using [vcpkg](https://vcpkg.io/en/)
 which means to build, you need a vcpkg environment setup, unfortunately even if 
 you are not building the tests. This build assumes you have done something like 
