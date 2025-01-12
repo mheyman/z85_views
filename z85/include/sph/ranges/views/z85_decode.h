@@ -4,6 +4,7 @@
 #include <optional>
 #include <ranges>
 #include <stdexcept>
+#include <variant>
 
 namespace sph::ranges::views
 {
@@ -39,15 +40,21 @@ namespace sph::ranges::views
                 using input_type = std::remove_cvref_t<std::ranges::range_value_t<R>>;
             private:
                 std::ranges::iterator_t<R> current_;
-                std::ranges::iterator_t<R> end_;
-                size_t current_pos_{ 0 };
+                std::ranges::sentinel_t<R> end_;
+                // only need to copy current value if sizeof(input_type) > 1
+                struct empty {};
+                using current_value_t = std::conditional_t<sizeof(input_type) == 1, empty, input_type>;
+                [[no_unique_address]] current_value_t current_value_;
+                using current_value_pos_t = std::conditional_t<sizeof(input_type) == 1, empty, size_t>;
+                [[no_unique_address]] current_value_pos_t current_value_pos_;
+
                 std::array<uint8_t, 4> buffer_ = {};
                 size_t buffer_pos_{ buffer_.size() };
                 value_type value_;
                 bool at_end_{ false };
             public:
 
-                iterator(std::ranges::iterator_t<R> begin, std::ranges::iterator_t<R> end)
+                iterator(std::ranges::iterator_t<R> begin, std::ranges::sentinel_t<R> end)
                     : current_(begin), end_(end)
                 {
                     load_next_value();
@@ -68,7 +75,14 @@ namespace sph::ranges::views
 
                 auto equals(const iterator& i) const -> bool
                 {
-                    return current_ == i.current_ && current_pos_ == i.current_pos_ && buffer_pos_ == i.buffer_pos_;
+                    if constexpr (sizeof(input_type) == 1)
+                    {
+                        return current_ == i.current_ && buffer_pos_ == i.buffer_pos_;
+                    }
+                    else
+                    {
+                        return current_ == i.current_ && current_value_pos_ == i.current_value_pos_ && buffer_pos_ == i.buffer_pos_;
+                    }
                 }
 
             	auto equals(const sentinel&) const -> bool
@@ -180,25 +194,18 @@ namespace sph::ranges::views
                     size_t i{ 0 };
                     while(true)
                     {
-                        uint8_t const c{ reinterpret_cast<uint8_t const*>(&*current_)[current_pos_++] };
+                        auto [c, end_of_input_value] {next_byte()};
                         if (is_okay(c, i))
                         {
                             ret[i++] = static_cast<char>(c);
                             if (i == ret.size())
                             {
-                                if (current_pos_ == sizeof(input_type))
-                                {
-                                    ++current_;
-                                    current_pos_ = 0;
-                                }
-
                                 return ret;
                             }
                         }
 
-                        if (current_pos_ == sizeof(input_type))
+                        if (end_of_input_value)
                         {
-                            ++current_;
                             if (current_ == end_)
                             {
                                 if (i == 0)
@@ -209,9 +216,31 @@ namespace sph::ranges::views
 
                                 throw std::runtime_error("z85_decode requires input to be a multiple of 5 characters");
                             }
-
-                            current_pos_ = 0;
                         }
+                    }
+                }
+
+                /**
+                 * \brief Gets the next byte and a value indicating whether the byte is the last byte of the current input value.
+                 * \return The next byte and a value indicating whether the byte is the last byte of the current input value.
+                 */
+                auto next_byte() -> std::tuple<uint8_t, bool>
+                {
+                    if constexpr (sizeof(input_type) == 1)
+                    {
+                        return { static_cast<uint32_t>(*current_++), true };
+                    }
+                    else
+                    {
+                        if (current_value_pos_ == sizeof(input_type))
+                        {
+                            current_value_ = *current_++;
+                            current_value_pos_ = 0;
+                        }
+
+                        uint8_t ret{ static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&current_value_)[current_value_pos_]) };
+                        ++current_value_pos_;
+                        return { ret, current_value_pos_ == sizeof(input_type) };
                     }
                 }
             };
@@ -241,9 +270,9 @@ namespace sph::ranges::views
         struct z85_decode_fn : std::ranges::range_adaptor_closure<z85_decode_fn<T>>
         {
             template <std::ranges::viewable_range R>
-            [[nodiscard]] constexpr auto operator()(R&& range) const -> z85_decode_view<R, T>
+            [[nodiscard]] constexpr auto operator()(R&& range) const -> z85_decode_view<std::views::all_t<R>, T>
             {
-                return z85_decode_view<R, T>(std::forward<R>(range));
+                return z85_decode_view<std::views::all_t<R>, T>(std::forward<R>(range));
             }
         };
     }
@@ -253,7 +282,7 @@ namespace sph::ranges::views
 namespace sph::views
 {
     template<typename T = uint8_t>
-    auto z85_decode(detail::z85_decode_tag = {}) -> sph::ranges::views::detail::z85_decode_fn<T>
+    auto z85_decode(sph::ranges::views::detail::z85_decode_tag = {}) -> sph::ranges::views::detail::z85_decode_fn<T>
     {
         return {};
     }

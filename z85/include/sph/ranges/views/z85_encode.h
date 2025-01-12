@@ -11,11 +11,12 @@ namespace sph::ranges::views
         // Custom transform view that filters bytes and then converts every 4 bytes into 5 bytes.
         template<std::ranges::viewable_range R>
             requires std::ranges::input_range<R> && std::is_standard_layout_v<std::ranges::range_value_t<R>>
-        class z85_encode_view : public std::ranges::view_interface<z85_encode_view<R>> {
+        class z85_encode_view : public std::ranges::view_interface<z85_encode_view<R>> 
+        {
             R input_;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
         public:
             explicit z85_encode_view(R&& input)  // NOLINT(cppcoreguidelines-rvalue-reference-param-not-moved)
-                : input_(std::forward<R>(input)) {}
+                : input_(std::move(std::ranges::views::all(std::forward<R>(input)))) {}
             z85_encode_view(z85_encode_view const&) = default;
             z85_encode_view(z85_encode_view&&) = default;
             ~z85_encode_view() noexcept = default;
@@ -31,26 +32,40 @@ namespace sph::ranges::views
             struct sentinel;
             class iterator
             {
-                std::ranges::iterator_t<R> current_;
-                std::ranges::iterator_t<R> end_;
-                size_t current_pos_{ 0 };
-                size_t buffer_pos_;
-                std::array<char, 5> buffer_ = {};
             public:
                 using iterator_category = std::input_iterator_tag;
                 using value_type = char;
                 using difference_type = std::ptrdiff_t;
                 using input_type = std::remove_cvref_t<std::ranges::range_value_t<R>>;
+            private:
+                std::ranges::iterator_t<R> current_;
+                std::ranges::sentinel_t<R> end_;
+                size_t buffer_pos_;
+                std::array<char, 5> buffer_ = {};
 
-                iterator(std::ranges::iterator_t<R> begin, std::ranges::iterator_t<R> end)
-                    : current_(begin), end_(end), buffer_pos_(0)
+                // only need to copy current value if sizeof(input_type) > 1
+                struct empty {};
+                using current_value_t = std::conditional_t<sizeof(input_type) == 1, empty, input_type>;
+                [[no_unique_address]] current_value_t current_value_;
+                using current_value_pos_t = std::conditional_t<sizeof(input_type) == 1, empty, size_t>;
+                [[no_unique_address]] current_value_pos_t current_value_pos_;
+            public:
+                iterator(std::ranges::iterator_t<R> begin, std::ranges::sentinel_t<R> end)
+                    : current_{ begin }, end_{ end }, buffer_pos_{ 0 }
                 {
                     load_next_chunk();
                 }
 
                 auto equals(const iterator& i) const -> bool
                 {
-                    return current_ == i.current_ && current_pos_ == i.current_pos_ && buffer_pos_ == i.buffer_pos_;
+                    if constexpr (sizeof(input_type) == 1)
+                    {
+                        return current_ == i.current_ && buffer_pos_ == i.buffer_pos_;
+                    }
+                    else
+                    {
+                        return current_ == i.current_ && current_value_pos_ == i.current_value_pos_ && buffer_pos_ == i.buffer_pos_;
+                    }
                 }
 
                 auto equals(const sentinel&) const -> bool
@@ -132,46 +147,41 @@ namespace sph::ranges::views
 
                 auto next_value() -> uint32_t
                 {
-                    uint32_t value{ static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&*current_)[current_pos_++]) << 24 };
-                    if (current_pos_ == sizeof(input_type))
-                    {
-                        current_pos_ = 0;
-                        ++current_;
-                        if (current_ == end_)
+                    uint32_t value{};
+                    std::ranges::for_each(std::array<size_t, 4>{{24, 16, 8, 0}}, [this, &value](size_t shift) {
+                        auto [v, end_of_input_value] {next_byte()};
+                        value |= v << shift;
+                        if (shift > 0 && end_of_input_value && current_ == end_)
                         {
                             throw std::runtime_error("z85_encode requires input to be a multiple of 4 bytes");
                         }
-                    }
-                    value |= static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&*current_)[current_pos_++]) << 16;
-                    if (current_pos_ == sizeof(input_type))
-                    {
-                        current_pos_ = 0;
-                        ++current_;
-                        if (current_ == end_)
-                        {
-                            throw std::runtime_error("z85_encode requires input to be a multiple of 4 bytes");
-                        }
-                    }
-                    value |= static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&*current_)[current_pos_++]) << 8;
-                    if (current_pos_ == sizeof(input_type))
-                    {
-                        current_pos_ = 0;
-                        ++current_;
-                        if (current_ == end_)
-                        {
-                            throw std::runtime_error("z85_encode requires input to be a multiple of 4 bytes");
-                        }
-                    }
-                    value |= static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&*current_)[current_pos_++]);
-                    if (current_pos_ == sizeof(input_type))
-                    {
-                        current_pos_ = 0;
-                        ++current_;
-                    }
-
+                    });
                     return value;
                 }
 
+                /**
+                 * \brief Gets the next byte (as a uint32_t) and a value indicating whether the byte is the last byte of the current input value.
+                 * \return The next byte (as a uint32_t) and a value indicating whether the byte is the last byte of the current input value.
+                 */
+                auto next_byte() -> std::tuple<uint32_t, bool>
+                {
+                    if constexpr (sizeof(input_type) == 1)
+                    {
+                        return { static_cast<uint32_t>(*current_++), true };
+                    }
+                    else
+                    {
+                        if (current_value_pos_ == sizeof(input_type))
+                        {
+                            current_value_ = *current_++;
+                            current_value_pos_ = 0;
+                        }
+
+                        uint8_t ret{ static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&current_value_)[current_value_pos_]) };
+                        ++current_value_pos_;
+                        return { ret, current_value_pos_ == sizeof(input_type) };
+                    }
+                }
             };
 
             struct sentinel
@@ -187,19 +197,17 @@ namespace sph::ranges::views
         };
 
         template<std::ranges::viewable_range R>
-        z85_encode_view(R&&) -> z85_encode_view<R>;
+        z85_encode_view(R&&) -> z85_encode_view<std::views::all_t<R>>;
 
         struct z85_encode_fn : std::ranges::range_adaptor_closure<z85_encode_fn>
         {
             template <std::ranges::viewable_range R>
-            [[nodiscard]] constexpr auto operator()(R&& range) const -> z85_encode_view<R>
+            [[nodiscard]] constexpr auto operator()(R&& range) const -> z85_encode_view<std::views::all_t<R>>
             {
-                return z85_encode_view(std::forward<R>(range));
+                return z85_encode_view(std::ranges::views::all(std::forward<R>(range)));
             }
         };
     }
-
-
 }
 
 namespace sph::views
