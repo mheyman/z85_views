@@ -1,8 +1,10 @@
 #pragma once
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <ranges>
 #include <stdexcept>
+#include <fmt/format.h>
 
 namespace sph::ranges::views
 {
@@ -16,7 +18,7 @@ namespace sph::ranges::views
             R input_;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
         public:
             explicit z85_encode_view(R&& input)  // NOLINT(cppcoreguidelines-rvalue-reference-param-not-moved)
-                : input_(std::move(std::ranges::views::all(std::forward<R>(input)))) {}
+                : input_(std::forward<R>(input)) {}
             z85_encode_view(z85_encode_view const&) = default;
             z85_encode_view(z85_encode_view&&) = default;
             ~z85_encode_view() noexcept = default;
@@ -38,8 +40,20 @@ namespace sph::ranges::views
                 using difference_type = std::ptrdiff_t;
                 using input_type = std::remove_cvref_t<std::ranges::range_value_t<R>>;
             private:
-                std::ranges::iterator_t<R> current_;
-                std::ranges::sentinel_t<R> end_;
+                static std::array<char, 85> constexpr base85
+                { {
+                    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+                    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+                    'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+                    'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D',
+                    'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N',
+                    'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+                    'Y', 'Z', '.', '-', ':', '+', '=', '^', '!', '/',
+                    '*', '?', '&', '<', '>', '(', ')', '[', ']', '{',
+                    '}', '@', '%', '$', '#'
+                } };
+                std::ranges::const_iterator_t<R> current_;
+                std::ranges::const_sentinel_t<R> end_;
                 size_t buffer_pos_;
                 std::array<char, 5> buffer_ = {};
 
@@ -50,11 +64,18 @@ namespace sph::ranges::views
                 using current_value_pos_t = std::conditional_t<sizeof(input_type) == 1, empty, size_t>;
                 [[no_unique_address]] current_value_pos_t current_value_pos_;
             public:
-                iterator(std::ranges::iterator_t<R> begin, std::ranges::sentinel_t<R> end)
-                    : current_{ begin }, end_{ end }, buffer_pos_{ 0 }
-                {
+                iterator(std::ranges::const_iterator_t<R> begin, std::ranges::const_sentinel_t<R> end)
+					: current_{ begin }, end_{ end }, buffer_pos_{ 0 }, current_value_pos_{ init_current_value_pos() }
+	            {
                     load_next_chunk();
                 }
+
+            	iterator() : current_{ std::ranges::sentinel_t<R>{}}, end_{}, buffer_pos_{buffer_.size()} {}
+                iterator(iterator const&) = default;
+                iterator(iterator &&) = default;
+                ~iterator() = default;
+                iterator &operator=(iterator const&) = default;
+                iterator &operator=(iterator&&) = default;
 
                 auto equals(const iterator& i) const -> bool
                 {
@@ -73,7 +94,7 @@ namespace sph::ranges::views
                     return current_ == end_ && buffer_pos_ == buffer_.size();
                 }
 
-                iterator& operator++()
+                auto operator++() -> iterator&
                 {
                     ++buffer_pos_;
                     if (buffer_pos_ >= buffer_.size())
@@ -84,7 +105,7 @@ namespace sph::ranges::views
                     return *this;
                 }
 
-                iterator& operator++(int)
+                auto operator++(int) -> iterator
                 {
                     auto ret{ *this };
                     ++buffer_pos_;
@@ -105,43 +126,44 @@ namespace sph::ranges::views
                 auto operator!=(const sentinel& s) const -> bool { return !equals(s); }
 
             private:
+                static constexpr auto init_current_value_pos() -> current_value_pos_t
+                {
+                    if constexpr (sizeof(input_type) == 1)
+                    {
+                        return empty{};
+                    }
+                    else
+                    {
+                        return size_t{ sizeof(input_type) };
+                    }
+                }
+
                 void load_next_chunk()
             	{
-                    if (current_ != end_)
+                    if (current_ != end_ || !at_end_of_input_value())
                     {
-                        uint32_t value{ next_value() };
+	                    uint32_t value{ next_value() };
 
-                        // convert uint32_t elements into 5-char elements
-                        static auto constexpr div85 = [](uint32_t v) -> uint32_t
-                    	{
-                        	static uint64_t constexpr div85_magic_{ 3233857729ULL };
-                            return (static_cast<uint32_t>((div85_magic_ * v) >> 32) >> 6);
-                        };
-                        static std::array<char, 85> constexpr base85
-                        { {
-                            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-                            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
-                            'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
-                            'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D',
-                            'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N',
-                            'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
-                            'Y', 'Z', '.', '-', ':', '+', '=', '^', '!', '/',
-                            '*', '?', '&', '<', '>', '(', ')', '[', ']', '{',
-                            '}', '@', '%', '$', '#'
-                        } };
-                        uint32_t value2 = div85(value);
-                        buffer_[4] = base85[value - (value2 * 85)];
-                        value = value2;
-                        value2 = div85(value);
-                        buffer_[3] = base85[value - (value2 * 85)];
-                        value = value2;
-                        value2 = div85(value);
-                        buffer_[2] = base85[value - (value2 * 85)];
-                        value = value2;
-                        value2 = div85(value);
-                        buffer_[1] = base85[value - (value2 * 85)];
-                        buffer_[0] = base85[value2];
-                        buffer_pos_ = 0;
+	                    // convert uint32_t elements into 5-char elements
+	                    static auto constexpr div85 = [](uint32_t v) -> uint32_t
+	                    {
+		                    static uint64_t constexpr div85_magic_{ 3233857729ULL };
+		                    return (static_cast<uint32_t>((div85_magic_ * v) >> 32) >> 6);
+	                    };
+
+	                    uint32_t value2 = div85(value);
+	                    buffer_[4] = base85[value - (value2 * 85)];
+	                    value = value2;
+	                    value2 = div85(value);
+	                    buffer_[3] = base85[value - (value2 * 85)];
+	                    value = value2;
+	                    value2 = div85(value);
+	                    buffer_[2] = base85[value - (value2 * 85)];
+	                    value = value2;
+	                    value2 = div85(value);
+	                    buffer_[1] = base85[value - (value2 * 85)];
+	                    buffer_[0] = base85[value2];
+	                    buffer_pos_ = 0;
                     }
                 }
 
@@ -149,9 +171,9 @@ namespace sph::ranges::views
                 {
                     uint32_t value{};
                     std::ranges::for_each(std::array<size_t, 4>{{24, 16, 8, 0}}, [this, &value](size_t shift) {
-                        auto [v, end_of_input_value] {next_byte()};
+                        auto const v{next_byte()};
                         value |= v << shift;
-                        if (shift > 0 && end_of_input_value && current_ == end_)
+                        if (shift > 0 && at_end_of_input_value() && current_ == end_)
                         {
                             throw std::runtime_error("z85_encode requires input to be a multiple of 4 bytes");
                         }
@@ -163,11 +185,11 @@ namespace sph::ranges::views
                  * \brief Gets the next byte (as a uint32_t) and a value indicating whether the byte is the last byte of the current input value.
                  * \return The next byte (as a uint32_t) and a value indicating whether the byte is the last byte of the current input value.
                  */
-                auto next_byte() -> std::tuple<uint32_t, bool>
+                auto next_byte() -> uint32_t
                 {
                     if constexpr (sizeof(input_type) == 1)
                     {
-                        return { static_cast<uint32_t>(*current_++), true };
+                        return static_cast<uint32_t>(*current_++);
                     }
                     else
                     {
@@ -177,9 +199,21 @@ namespace sph::ranges::views
                             current_value_pos_ = 0;
                         }
 
-                        uint8_t ret{ static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&current_value_)[current_value_pos_]) };
+                        uint32_t const ret{ static_cast<uint32_t>(reinterpret_cast<uint8_t const*>(&current_value_)[current_value_pos_]) };
                         ++current_value_pos_;
-                        return { ret, current_value_pos_ == sizeof(input_type) };
+                        return ret;
+                    }
+                }
+
+                auto at_end_of_input_value() -> bool
+                {
+                    if constexpr (sizeof(input_type) == 1)
+                    {
+                        return true;
+                    }
+                    else
+                    {
+                        return current_value_pos_ == sizeof(input_type);
                     }
                 }
             };
@@ -204,7 +238,7 @@ namespace sph::ranges::views
             template <std::ranges::viewable_range R>
             [[nodiscard]] constexpr auto operator()(R&& range) const -> z85_encode_view<std::views::all_t<R>>
             {
-                return z85_encode_view(std::ranges::views::all(std::forward<R>(range)));
+                return z85_encode_view(std::views::all(std::forward<R>(range)));
             }
         };
     }
