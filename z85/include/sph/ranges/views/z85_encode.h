@@ -10,7 +10,10 @@ namespace sph::ranges::views
 {
     namespace detail
     {
-        // Custom transform view that filters bytes and then converts every 4 bytes into 5 bytes.
+        /**
+         * @brief A view that encodes binary data into Z85-encoded data into by converting every 4 bytes into 5 characters.
+         * @tparam R The input range type
+         */
         template<std::ranges::viewable_range R>
             requires std::ranges::input_range<R> && std::is_standard_layout_v<std::ranges::range_value_t<R>>
         class z85_encode_view : public std::ranges::view_interface<z85_encode_view<R>> 
@@ -18,7 +21,21 @@ namespace sph::ranges::views
             R input_;  // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
         public:
             explicit z85_encode_view(R&& input)  // NOLINT(cppcoreguidelines-rvalue-reference-param-not-moved)
-                : input_(std::forward<R>(input)) {}
+                : input_(std::forward<R>(input))
+            {
+                if (std::ranges::empty(input_))
+                {
+                    return;
+                }
+
+                if (std::ranges::size(input_) % 4 != 0)
+                {
+                    throw std::invalid_argument(
+                        fmt::format("Z85 encode requires input size to be multiple of 4, got {}",
+                            std::ranges::size(input_))
+                    );
+                }
+            }
             z85_encode_view(z85_encode_view const&) = default;
             z85_encode_view(z85_encode_view&&) = default;
             ~z85_encode_view() noexcept = default;
@@ -26,7 +43,11 @@ namespace sph::ranges::views
             auto operator=(z85_encode_view&& o) noexcept -> z85_encode_view &
             {
                 // not sure why "= default" doesn't work here...
-                input_ = std::move(std::forward<z85_encode_view>(o).input_);
+                if (this != &o)
+                {
+                    input_ = std::move(o.input_);
+                }
+
                 return *this;
             }
 
@@ -40,18 +61,9 @@ namespace sph::ranges::views
                 using difference_type = std::ptrdiff_t;
                 using input_type = std::remove_cvref_t<std::ranges::range_value_t<R>>;
             private:
-                static std::array<char, 85> constexpr base85
-                { {
-                    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-                    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
-                    'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
-                    'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D',
-                    'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N',
-                    'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
-                    'Y', 'Z', '.', '-', ':', '+', '=', '^', '!', '/',
-                    '*', '?', '&', '<', '>', '(', ')', '[', ']', '{',
-                    '}', '@', '%', '$', '#'
-                } };
+                static std::string_view constexpr base85{
+					"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"
+                };
                 std::ranges::const_iterator_t<R> current_;
                 std::ranges::const_sentinel_t<R> end_;
                 size_t buffer_pos_;
@@ -77,7 +89,7 @@ namespace sph::ranges::views
                 iterator &operator=(iterator const&) = default;
                 iterator &operator=(iterator&&) = default;
 
-                auto equals(const iterator& i) const -> bool
+                auto equals(const iterator& i) const noexcept -> bool
                 {
                     if constexpr (sizeof(input_type) == 1)
                     {
@@ -89,7 +101,7 @@ namespace sph::ranges::views
                     }
                 }
 
-                auto equals(const sentinel&) const -> bool
+                auto equals(const sentinel&) const noexcept -> bool
                 {
                     return current_ == end_ && buffer_pos_ == buffer_.size();
                 }
@@ -138,6 +150,12 @@ namespace sph::ranges::views
                     }
                 }
 
+                static constexpr auto div85(uint32_t v) -> uint32_t
+                {
+                    static uint64_t constexpr div85_magic{ 3233857729ULL };
+                    return static_cast<uint32_t>((div85_magic * v) >> 38);
+                }
+
                 void load_next_chunk()
             	{
                     if (current_ != end_ || !at_end_of_input_value())
@@ -145,12 +163,6 @@ namespace sph::ranges::views
 	                    uint32_t value{ next_value() };
 
 	                    // convert uint32_t elements into 5-char elements
-	                    static auto constexpr div85 = [](uint32_t v) -> uint32_t
-	                    {
-		                    static uint64_t constexpr div85_magic_{ 3233857729ULL };
-		                    return (static_cast<uint32_t>((div85_magic_ * v) >> 32) >> 6);
-	                    };
-
 	                    uint32_t value2 = div85(value);
 	                    buffer_[4] = base85[value - (value2 * 85)];
 	                    value = value2;
@@ -175,7 +187,10 @@ namespace sph::ranges::views
                         value |= v << shift;
                         if (shift > 0 && at_end_of_input_value() && current_ == end_)
                         {
-                            throw std::runtime_error("z85_encode requires input to be a multiple of 4 bytes");
+                            throw std::runtime_error(
+                                fmt::format("Z85 encoding error: Input length {} is not a multiple of 4 bytes",
+                                    std::distance(std::ranges::begin(input_), std::ranges::end(input_)))
+                            );
                         }
                     });
                     return value;
@@ -185,7 +200,7 @@ namespace sph::ranges::views
                  * \brief Gets the next byte (as a uint32_t) and a value indicating whether the byte is the last byte of the current input value.
                  * \return The next byte (as a uint32_t) and a value indicating whether the byte is the last byte of the current input value.
                  */
-                auto next_byte() -> uint32_t
+                auto constexpr next_byte() -> uint32_t
                 {
                     if constexpr (sizeof(input_type) == 1)
                     {
@@ -246,6 +261,9 @@ namespace sph::ranges::views
 
 namespace sph::views
 {
+	/**
+	 * @brief A view adaptor that encodes binary data into Z85-encoded data by converting every 4 bytes into 5 characters.
+	 */
     inline auto z85_encode() -> sph::ranges::views::detail::z85_encode_fn
     {
         return {};

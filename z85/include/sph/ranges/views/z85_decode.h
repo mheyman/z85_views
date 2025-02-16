@@ -11,7 +11,7 @@ namespace sph::ranges::views
     namespace detail
     {
         /**
-		 * @brief A view that decodes Z85-encoded data into binary data by converting every 4 bytes into 5 bytes.
+		 * @brief A view that decodes Z85-encoded data into binary data by converting every 5 characters into 4 bytes.
 		 * @tparam R The input range type
 		 * @tparam T The output value type
 		 */
@@ -289,6 +289,10 @@ namespace sph::ranges::views
 
 namespace sph::views
 {
+	/**
+	 * @brief A view adaptor that decodes Z85-encoded data into binary data by converting every 5 characters into 4 binary bytes.
+	 * @tparam T The type of the decoded values (defaults to uint8_t).
+	 */
     template<typename T = uint8_t>
     auto z85_decode() -> sph::ranges::views::detail::z85_decode_fn<T>
     {
