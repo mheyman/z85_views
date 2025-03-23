@@ -132,10 +132,10 @@ namespace sph::ranges::views
 
                 value_type operator*() const { return buffer_[buffer_pos_]; }
 
-                auto operator==(const iterator& other) const -> bool { return equals(other); }
-                auto operator==(const sentinel& s) const -> bool { return equals(s); }
-                auto operator!=(const iterator& other) const -> bool { return !equals(other); }
-                auto operator!=(const sentinel& s) const -> bool { return !equals(s); }
+                auto operator==(const iterator& other) const noexcept -> bool { return equals(other); }
+                auto operator==(const sentinel& s) const noexcept -> bool { return equals(s); }
+                auto operator!=(const iterator& other) const noexcept -> bool { return !equals(other); }
+                auto operator!=(const sentinel& s) const noexcept -> bool { return !equals(s); }
 
             private:
                 static constexpr auto init_current_value_pos() -> current_value_pos_t
